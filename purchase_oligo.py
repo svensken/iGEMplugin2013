@@ -2,18 +2,47 @@
       PyMOL plugin for Rutgers iGEM 2013 winning-team awesomeness
 """
 
+### IMPORTANT ATTRIBUTION NOTE: This script was adapted from Hongbo Zhu's
+### msms pymol plugin. Thank you, Hongbo! His copyright notice is:
+
 # Copyright Notice
 # ================
 #
-# uhhh... no copyright.
-# Code taken from MSMS plugin. Thanks, Hongbo Zhu.
-
+# The PyMOL Plugin source code in this file is copyrighted, but you can
+# freely use and copy it as long as you don't change or remove any of
+# the copyright notices.
+#
+# ----------------------------------------------------------------------
+#               This PyMOL Plugin is Copyright (C) 2010 by
+#                 Hongbo Zhu <macrozhu at gmail dot com>
+#
+#                        All Rights Reserved
+#
+# Permission to use, copy, modify, distribute, and distribute modified
+# versions of this software and its documentation for any purpose and
+# without fee is hereby granted, provided that the above copyright
+# notice appear in all copies and that both the copyright notice and
+# this permission notice appear in supporting documentation, and that
+# the name(s) of the author(s) not be used in advertising or publicity
+# pertaining to distribution of the software without specific, written
+# prior permission.
+#
+# THE AUTHOR(S) DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+# INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS.  IN
+# NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+# CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF
+# USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+# ----------------------------------------------------------------------
 
 
 
 import os
-import sys, platform, subprocess
+import sys, platform, subprocess, tempfile
 import time
+import difflib
+
 import tkSimpleDialog
 import tkMessageBox
 import tkFileDialog
@@ -26,6 +55,9 @@ from pymol import cmd
 from pymol.cgo import *
 # tkinter
 import Pmw
+# links
+#import webbrowser
+
 
 VERBOSE = True
 
@@ -50,7 +82,7 @@ class OligoPurchase:
 
         # parameters
         self.pymol_sel_gene = Tkinter.StringVar()
-        self.pymol_sel_mut = Tkinter.StringVar()
+        self.dnaseq_fn = Tkinter.StringVar()
         self.seqpos = Tkinter.StringVar()
         self.new_aa = Tkinter.StringVar()
 
@@ -78,14 +110,14 @@ class OligoPurchase:
         group_seq.pack(fill='both', expand=True, padx=10, pady=5)
 
         pymol_sel_ent_gene = Pmw.EntryField(group_seq,
-                                       label_text='PyMOL selection:',
-                                       labelpos='wn',
-                                       entry_textvariable=self.pymol_sel_gene
-                                       )
+                                           label_text='PyMOL selection:',
+                                           labelpos='wn',
+                                           entry_textvariable=self.pymol_sel_gene
+                                           )
         plasmid_box = Tkinter.Checkbutton(group_seq,
-                                       text='plasmidify (gene in pSB1C3, ready for iGEM biobricks submission)',
-                                       variable=self.plasmidify,
-                                       onvalue=True, offvalue=False)
+                                           text='plasmidify (gene in pSB1C3, ready for iGEM biobricks submission)',
+                                           variable=self.plasmidify,
+                                           onvalue=True, offvalue=False)
 
         # arrange widgets using grid
         pymol_sel_ent_gene.grid(sticky='we', row=0, column=0,
@@ -102,11 +134,11 @@ class OligoPurchase:
         group_mut = Tkinter.LabelFrame(page, text = 'Craft Mutational Oligos to order')
         group_mut.pack(fill='both', expand=True, padx=10, pady=5)
 
-        pymol_sel_ent = Pmw.EntryField(group_mut,
-                                       label_text='PyMOL selection:',
-                                       labelpos='wn',
-                                       entry_textvariable=self.pymol_sel_mut
-                                       )
+        dnaseq_ent = Pmw.EntryField(group_mut,
+                                    label_text = 'Original DNA seq (FASTA file):', labelpos='wn',
+                                    entry_textvariable=self.dnaseq_fn)
+        dnaseq_but = Tkinter.Button(group_mut, text = 'Browse...',
+                                    command = self.getFastaFile)
         seqpos_ent = Pmw.EntryField(group_mut,
                                     label_text='Sequence Position: (eg 54)',
                                     labelpos='wn',
@@ -119,8 +151,8 @@ class OligoPurchase:
                                     )
 
         # arrange widgets using grid
-        pymol_sel_ent.grid(sticky='we', row=0, column=0,
-                           columnspan=2, padx=5, pady=5)
+        dnaseq_ent.grid(sticky='we', row=0, column=0, padx=5, pady=5)
+        dnaseq_but.grid(sticky='we', row=0, column=1, padx=5, pady=5)
         seqpos_ent.grid(sticky='we', row=1, column=0,
                         columnspan=2, padx=1, pady=1)
         new_aa_ent.grid(sticky='we', row=2, column=0,
@@ -129,9 +161,9 @@ class OligoPurchase:
         group_mut.columnconfigure(1, weight=1)
 
 
-        ######################
+        #################
         # Tab : About Tab
-        ######################
+        #################
         page = self.notebook.add('About')
         group_about = Tkinter.LabelFrame(page, text = 'About Oligo-ordering Plugin for PyMOL')
         group_about.grid(sticky='we', row=0,column=0,padx=10,pady=5)
@@ -139,270 +171,221 @@ class OligoPurchase:
 Created by Rutgers iGEM team 2013, Rutgers University, NJ.
 
 """
-
         label_about = Tkinter.Label(group_about,text=about_plugin)
         label_about.grid(sticky='we', row=0, column=0, padx=5, pady=10)
+
 
         self.notebook.setnaturalsize()
 
         return
 
 
-    def getPDBFile(self):
+    def getFastaFile(self):
         file_name = tkFileDialog.askopenfilename(
-            title='PDB File', initialdir='',
-            filetypes=[('pdb files', '*.pdb *.ent'), ('all files', '*')],
+            title='DNA Sequence File', initialdir='',
+            filetypes=[('fasta files', '*.fasta'), ('all files', '*')],
             parent=self.parent)
-        self.pdb_fn.set(file_name)
+        self.dnaseq_fn.set(file_name)
 
-    def getMsmsBin(self):
-        msms_bin_fname = tkFileDialog.askopenfilename(
-            title='MSMS Binary', initialdir='',
-            filetypes=[('all','*')], parent=self.parent)
-        self.msms_bin.set(msms_bin_fname)
+    def derive_sequence_from_selection(self, pymol_selection):
+        _handle, temp_fasta_path = tempfile.mkstemp(suffix=".fasta")
+        cmd.save( temp_fasta_path, pymol_selection )
+        with open(temp_fasta_path,'r') as fastafile:
+            fastafile = fastafile.readlines()
+            aaseq = ''.join( fastafile[1:] ) # all lines except title line
+        os.remove(temp_fasta_path)
 
-##     def getPdb2xyzrBin(self):
-##         pdb2xyzr_bin_fname = tkFileDialog.askopenfilename(
-##             title='pdb2xyzr Binary', initialdir='',
-##             filetypes=[('all','*')], parent=self.parent)
-##         self.pdb2xyzr_bin.set(pdb2xyzr_bin_fname)
+        ## super crude codon optimization :)
+        dnaseq = []
+        for letter in aaseq:
+            if letter == 'A':
+                letter = 'GCG'
+            elif letter == 'R':
+                letter = 'AGG'
+            elif letter == 'N':
+                letter = 'AAT'
+            elif letter == 'D':
+                letter = 'GAT'
+            elif letter == 'C':
+                letter = 'TGT'
+            elif letter == 'E':
+                letter = 'GAG'
+            elif letter == 'Q':
+                letter = 'CAG'
+            elif letter == 'G':
+                letter = 'GGG'
+            elif letter == 'H':
+                letter = 'CAT'
+            elif letter == 'I':
+                letter = 'ATA'
+            elif letter == 'L':
+                letter = 'TTG'
+            elif letter == 'K':
+                letter = 'AAG'
+            elif letter == 'M':
+                letter = 'ATG'
+            elif letter == 'F':
+                letter = 'TTT'
+            elif letter == 'P':
+                letter = 'CCG'
+            elif letter == 'S':
+                letter = 'AGT'
+            elif letter == 'T':
+                letter = 'ACG'
+            elif letter == 'W':
+                letter = 'TGG'
+            elif letter == 'Y':
+                letter = 'TAT'
+            elif letter == 'V':
+                letter = 'GTG'
+            if letter not in '\n':
+                dnaseq.append(letter)
+        dnaseq = ''.join(dnaseq)
+        ## TODO: important! last "A" base is outside reading frame O_o
+        dnaseq = "GTTTCTTCGAATTCGCGGCCGCTTCTAGAG"+dnaseq+"GTTTCTTCCTGCAGCGGCCGCTACTAGTATTATTA"
+        print dnaseq
+        return dnaseq
 
-    def getPdb2xyzrnBin(self):
-        pdb2xyzrn_bin_fname = tkFileDialog.askopenfilename(
-            title='pdb2xyzrn Binary', initialdir='',
-            filetypes=[('all','*')], parent=self.parent)
-        self.pdb2xyzrn_bin.set(pdb2xyzrn_bin_fname)
+    def show_how_NOPLASMID(self, local_dna_fastafile):
+        gene_insert_howto = """
+1) Copy the DNA sequence from:
 
-    def getTmpDir(self):
-        tmp_dir = tkFileDialog.askdirectory()
-        self.tmp_dir.set(tmp_dir)
+""" + os.path.abspath( local_dna_fastafile ) + """
 
-    def getStrucPDBFname(self):
-        """ get the PDB file name for the structure to work on
-            if the structure is specified by a pymol selection, save it in the temp dir;
-            if the structure is specified by a separate PDB file, use it.
+2) Please visit:
+http://www.idtdna.com/order/OrderEntry.aspx?type=dna&qs=1
+
+3) Paste the sequence into the textbox and order your oligo!
+"""
+        tkMessageBox.showinfo(title='Gene without Plasmid - Instructions', message=gene_insert_howto)
+
+    def show_how_YESPLASMID(self, local_dna_fastafile):
+        gene_plasmid_howto = """
+1) Copy the DNA sequence from:
+
+""" + os.path.abspath( local_dna_fastafile ) + """
+
+2) Please visit:
+https://www.genscript.com/ssl-bin/quote_gene_synthesis
+
+3) Prepare the custom biobrick-compatible pSB1C3 plasmid as per instructions
+
+4) Paste the DNA sequence into the textbox and order your plasmid!
+"""
+        tkMessageBox.showinfo(title='Gene with Plasmid - Instructions', message=gene_plasmid_howto)
+
+    ### this function is not necessary with FASTA input. 
+    ### if we switch back to directly pasting dnaseq into text field, this function will be good to have
+    def gene_parse(self, gene_input):
+        dna_string = ''.join( [letter.upper() for letter in gene_input if letter.upper() in ['A','C', 'G','T'] ] ) # DNA letters
+        non_dna_string = ''.join( [letter.upper() for letter in gene_input if letter.upper() not in ['A','C', 'G','T'] ] ) # non-DNA letters
+        if non_dna_string:
+            print "psyyyych. gimme DNA only"
+            return False
+        
+        if dna_string and not non_dna_string:
+            return dna_string
+
+    def derive_sequence_from_fastafile(self, fastafile):
+        with open(fastafile,'r') as orig_dna:
+            orig_dna = orig_dna.readlines()
+            orig_dna = ''.join(orig_dna[1:]).replace('\n','')
+        return orig_dna
+
+    ## TODO: very important: convert pose-numbering to pdb-numbering
+    def gimme_mutational_oligo( self, dnaseq, seqpos, newaa ):
+        clip_before, clip_after = (int(seqpos)-1)*3, int(seqpos)*3
+        orig_codon = dnaseq[ clip_before : clip_after ]
+        potential_codons = {
+            'A':['GCG','GCA','GCT','GCC'],
+            'R':['AGG','AGA','CGG','CGA','CGT','CGC'],
+            'N':['AAT','AAC'],
+            'D':['GAT','GAC'],
+            'C':['TGT','TGC'],
+            'E':['GAG','GAA'],
+            'Q':['CAG','CAA'],
+            'G':['GGG','GGA','GGT','GGC'],
+            'H':['CAT','CAC'],
+            'I':['ATA','ATT','ATC'],
+            'L':['TTG','TTA','CTG','CTA','CTT','CTC'],
+            'K':['AAG','AAA'],
+            'M':['ATG'],
+            'F':['TTT','TTC'],
+            'P':['CCG','CCA','CCT','CCC'],
+            'S':['AGT','AGC','TCG','TCA','TCT','TCC'],
+            'T':['ACG','ACA','ACT','ACC'],
+            'W':['TGG'],
+            'Y':['TAT','TAC'],
+            'V':['GTG','GTA','GTT','GTC']
+            }
+        new_codon = difflib.get_close_matches( orig_codon, potential_codons[ newaa ], 1 ) # only return best
+        if not new_codon: # nothing even close :P
+            new_codon = [ potential_codons[ newaa ][0] ]
+        # return oligo, which extends 15 bases in each direction (terminal mutations are extremely rare... unless... His-tag?)
+        oligo_to_order = dnaseq[ clip_before-15 : clip_before ] + new_codon[0] + dnaseq[ clip_after : clip_after+15 ]
+        print oligo_to_order
+        return oligo_to_order
+
+    def show_how_MUTATION(self, mut_oligo):
+        mut_oligo_howto = """
+1) Copy the DNA sequence from:
+
+""" + os.path.abspath( local_dna_fastafile ) + """
+
+2) Please visit:
+https://www.genscript.com/ssl-bin/quote_gene_synthesis
+
+3) Prepare the custom biobrick-compatible pSB1C3 plasmid as per instructions
+
+4) Paste the DNA sequence into the textbox and order your plasmid!
+"""
+        tkMessageBox.showinfo(title='Gene with Plasmid - Instructions', message=gene_plasmid_howto)
+
+    def execute(self, command):
+        """ Run the command represented by the botton clicked by user.
         """
-        pdb_fn = None
-        sel = self.pymol_sel.get()
+        if command == 'OK':
+            print 'cool'
 
-        if len(sel) > 0: # if any pymol selection is specified
-            # save the pymol selection in the tmp dir
-            all_sel_names = cmd.get_names('selections') # get names of all selections
+        elif command == 'Buy Gene':
+            protein_sel = self.pymol_sel_gene.get()
 
-            tmp_dir = self.tmp_dir.get()
-            if tmp_dir[-1] == '/' or tmp_dir[-1] == '\\':
-                tmp_dir = tmp_dir[:-1]
-                self.tmp_dir.set(tmp_dir)
-
-            if sel in all_sel_names:
-                #pdb_fn = '%s/pymol_sele_%s_%s.pdb' % (self.tmp_dir.get(), sel,
-                #                                      str(time.time()).replace('.',''))
-                pdb_fn = os.path.join(self.tmp_dir.get(),"pymol_sele_%s_%s.pdb"%(sel,str(time.time()).replace('.','')))
-                cmd.save(filename=pdb_fn,selection=sel)
-                if VERBOSE:
-                    print 'Selection %s saved to %s.' % (sel, pdb_fn)
-            else:  # sel is unknown
-                err_msg = 'Unknown selection name: %s' % (sel,)
-                print 'ERROR: %s' % (err_msg,)
-                tkMessageBox.showinfo(title='ERROR', message=err_msg)
-
-        elif len(self.pdb_fn.get()) > 0:  # if no selection specified, use specified PDB file
-            pdb_fn = self.pdb_fn.get()
-            if not os.path.isfile(pdb_fn):
-                err_msg = 'PDB file does not exist: %s' % (pdb_fn,)
-                print 'ERROR: %s' % (err_msg,)
-                tkMessageBox.showinfo(title='ERROR', message=err_msg)
-
-        else:   # what structure do you want MSMS to work on?
-            err_msg = 'Neither PyMOL selection nor PDB file specified!'
-            print 'ERROR: %s' % (err_msg,)
-            tkMessageBox.showinfo(title='ERROR', message=err_msg)
-
-        return pdb_fn
-
-
-    def cleanMSMSOutput(self):
-
-        if os.path.isfile(self.msms_vert_fn):
-            if VERBOSE: print 'Cleaning msms vert file', self.msms_vert_fn
-            os.remove(self.msms_vert_fn)
-            self.msms_vert_fn = None
-        if os.path.isfile(self.msms_face_fn):
-            if VERBOSE: print 'Cleaning msms face file', self.msms_face_fn
-            os.remove(self.msms_face_fn)
-            self.msms_face_fn = None
-
-        for i in xrange(len(self.msms_cpn_vert_fn_list)):
-            vfn = self.msms_cpn_vert_fn_list[i]
-            ffn = self.msms_cpn_face_fn_list[i]
-            if os.path.isfile(vfn):
-                if VERBOSE: print 'Cleaning msms face file', vfn
-                os.remove(vfn)
-            if os.path.isfile(ffn):
-                if VERBOSE: print 'Cleaning msms face file', ffn
-                os.remove(ffn)
-
-        self.msms_cpn_vert_fn_list = []
-        self.msms_cpn_face_fn_list = []
-
-        return
-
-    def runMSMS(self):
-        """
-            @return: whether MSMS has been executed successfully
-            @rtype: boolean
-        """
-        # clean up old results, which might be from previous execution
-        self.msms_vert_fn = None  # external surface
-        self.msms_face_fn = None
-        self.msms_cpn_vert_fn_list = [] # internal components
-        self.msms_cpn_face_fn_list = []
-        self.msp = MSMSSurfPymol()
-        self.cpn_msp_list = [] # MSMSSurfPymol objects for internal components
-
-        tmp_dir = self.tmp_dir.get()
-        if tmp_dir[-1] == '/' or tmp_dir[-1] == '\\':
-            tmp_dir = tmp_dir[:-1]
-            self.tmp_dir.set(tmp_dir)
-
-        if VERBOSE:
-            print 'MSMS bin  =',self.msms_bin.get()
-##             print self.pdb2xyzr_bin.get()
-            print 'pdb2xyzrn =', self.pdb2xyzrn_bin.get()
-            print 'tmp dir   =', self.tmp_dir.get()
-
-        pdb_fn = self.getStrucPDBFname()
-        if pdb_fn is None: return None
-
-        print 'Running MSMS ...'
-        if VERBOSE:
-            print 'Probe raidus            =', self.probe_radius.get()
-            print 'Surface vertex density  =', self.density.get()
-            print 'Surface vertex hdensity =', self.hdensity.get()
-            print 'Ignore hydrogen atoms   =', str(self.noh.get())
-            print 'Consider all surface components =', str(self.allcpn.get())
-
-        msms = Msms(msms_bin=self.msms_bin.get(),
-                    #pdb2xyzr_bin=self.pdb2xyzr_bin.get(),
-                    pdb2xyzrn_bin=self.pdb2xyzrn_bin.get(),
-                    pr=self.probe_radius.get(),
-                    den=self.density.get(),
-                    hden=self.hdensity.get(),
-                    noh=self.noh.get(), all_components=self.allcpn.get(),
-                    output_dir=self.tmp_dir.get()
-                    )
-        msms.run(pdb_fn)
-        print 'done!'
-
-        # remove temp file (saved pymol selection)
-        if self.cleanup_saved_pymol_sel and \
-                len(self.pymol_sel.get()) > 0 and os.path.isfile(pdb_fn):
-            if VERBOSE: print 'Cleaning temp file(s)', pdb_fn
-            #!os.remove(pdb_fn)  # clean up (remove pdb file of the pymol selection)
-
-        fn_list = msms.getOutputFiles()
-        self.msms_vert_fn = fn_list[0]
-        self.msms_face_fn = fn_list[1]
-
-        # make copies. do not use reference
-        [self.msms_cpn_vert_fn_list.append(fni) for fni in fn_list[2]]
-        [self.msms_cpn_face_fn_list.append(fni) for fni in fn_list[3]]
-
-        if VERBOSE:
-            print 'MSMS .vert file:', self.msms_vert_fn
-            print 'MSMS .face file:', self.msms_face_fn
-
-        return msms
-
-    def custermizeMeshColor(self):
-        try:
-            color_tuple, color = tkColorChooser.askcolor(color=self.mesh_col)
-            if color_tuple is not None and color is not None:
-                self.mesh_col_R, self.mesh_col_G, self.mesh_col_B = color_tuple
-                self.mesh_col = color
-                self.mesh_col_but['bg']=self.mesh_col
-                self.mesh_col_but['activebackground']=self.mesh_col
-                self.mesh_col_but.update()
-        except Tkinter._tkinter.TclError:
-            print 'Old color (%s) will be used.' % (self.mesh_col)
-
-        return
-
-    def custermizeVertColor(self):
-        try:
-            color_tuple, color = tkColorChooser.askcolor(color=self.vert_col)
-            if color_tuple is not None and color is not None:
-                self.vert_col_R, self.vert_col_G, self.vert_col_B = color_tuple
-                self.vert_col = color
-                self.vert_col_but['bg']=self.vert_col
-                self.vert_col_but['activebackground']=self.vert_col
-                self.vert_col_but.update()
-        except Tkinter._tkinter.TclError:
-            print 'Old color (%s) will be used.' % (self.vert_col)
-
-        return
-
-    def custermizeNormColor(self):
-        try:
-            color_tuple, color = tkColorChooser.askcolor(color=self.norm_col)
-            if color_tuple is not None and color is not None:
-                self.norm_col_R, self.norm_col_G, self.norm_col_B = color_tuple
-                self.norm_col = color
-                self.norm_col_but['bg']=self.norm_col
-                self.norm_col_but['activebackground']=self.norm_col
-                self.norm_col_but.update()
-        except Tkinter._tkinter.TclError:
-            print 'Old color (%s) will be used.' % (self.norm_col)
-
-        return
-
-    def execute(self, cmd):
-        """ Run the cmd represented by the botton clicked by user.
-        """
-        if cmd == 'OK':
-            print 'is everything OK?'
-
-        elif cmd == 'Run MSMS':
-
-            if self.runMSMS() is not None: # msms has been executed successfully
-
-                if VERBOSE: print 'Parsing MSMS output ...'
-                self.msp.parseVertFile(self.msms_vert_fn)
-                self.msp.parseFaceFile(self.msms_face_fn)
-
-                if self.allcpn: # all componenents of surface
-                    for i in xrange(len(self.msms_cpn_vert_fn_list)):
-                        vfn = self.msms_cpn_vert_fn_list[i]
-                        ffn = self.msms_cpn_face_fn_list[i]
-                        cpn_msp = MSMSSurfPymol()
-                        cpn_msp.parseVertFile(vfn)
-                        cpn_msp.parseFaceFile(ffn)
-                        self.cpn_msp_list.append(cpn_msp)
-
-                if VERBOSE: print 'done!'
-
-                if self.cleanup_msms_output.get(): # clean up
-                    self.cleanMSMSOutput()
-
-        elif cmd == 'Display Mesh':
-            if len(self.msp.vert_coords) == 0:
-                err_msg = 'Please execute MSMS first.'
-                print 'ERROR: %s' % (err_msg,)
-                tkMessageBox.showinfo(title='ERROR', message=err_msg)
+            ## make sure text exists
+            if not protein_sel:
+                print "no protein?"
+                return False
             else:
-                self.msp.displayMsmsSurfMesh(mesh_cgo_color= \
-                                             (self.mesh_col_R/255.0,
-                                              self.mesh_col_G/255.0,
-                                              self.mesh_col_B/255.0))
-                if self.allcpn:
-                    for i in xrange(len(self.cpn_msp_list)):
-                        self.cpn_msp_list[i].displayMsmsSurfMesh(
-                            mesh_cgo_name='msms_surf_mesh_%d' % (i+1),
-                            mesh_cgo_color= (self.mesh_col_R/255.0,
-                                             self.mesh_col_G/255.0,
-                                             self.mesh_col_B/255.0))
+                if not self.plasmidify.get():
+                    gene_insert_string = self.derive_sequence_from_selection(protein_sel,plasmid=False)
+                else:
+                    gene_insert_string = self.derive_sequence_from_selection(protein_sel,plasmid=True)
+                if not gene_insert_string:
+                    gene_insert_string = "[error...hmmm]"
+                local_dna_fastafile = protein_sel+".iGEMplugin.DNA.gene.fasta"
+                with open(local_dna_fastafile,'w') as dnafastafile:
+                    dnafastafile.write( ">"+protein_sel+"\n"+gene_insert_string )
+                if not self.plasmidify.get():
+                    self.show_how_NOPLASMID(local_dna_fastafile)
+                else:
+                    self.show_how_YESPLASMID(local_dna_fastafile)
 
-        elif cmd == 'Display Vertices':
+        elif command == 'Buy Mutational Oligo':
+            # original DNA sequence
+            fastafile = self.dnaseq_fn.get()
+
+            ## make sure there's input
+            if not fastafile:
+                print "psyyyych. gimme a file."
+                return False
+            else:
+                dnaseq = self.derive_sequence_from_fastafile( fastafile )
+                oligoseq = self.gimme_mutational_oligo( dnaseq, self.seqpos.get(), self.new_aa.get() )
+                # just differentiate file by time made...
+                local_dna_fastafile = time.strftime("%H_%M_%S", time.gmtime())+".iGEMplugin.DNA.mutation.fasta"
+                with open(local_dna_fastafile,'w') as dnafastafile:
+                    dnafastafile.write( ">"+protein_sel+"\n"+gene_insert_string )
+
+        elif command == 'Display Vertices':
             if len(self.msp.vert_coords) == 0:
                 err_msg = 'Please execute MSMS first.'
                 print 'ERROR: %s' % (err_msg,)
@@ -439,7 +422,7 @@ Created by Rutgers iGEM team 2013, Rutgers University, NJ.
                             norm_cgo_name='msms_surf_nrom_%d' % (i+1)
                             )
 
-        elif cmd == 'Exit':
+        elif command == 'Exit':
             print 'Exiting oligo-ordering Plugin ...'
             if __name__ == '__main__':
                 self.parent.destroy()
