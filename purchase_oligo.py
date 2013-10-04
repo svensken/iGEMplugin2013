@@ -187,14 +187,7 @@ Created by Rutgers iGEM team 2013, Rutgers University, NJ.
             parent=self.parent)
         self.dnaseq_fn.set(file_name)
 
-    def derive_sequence_from_selection(self, pymol_selection):
-        _handle, temp_fasta_path = tempfile.mkstemp(suffix=".fasta")
-        cmd.save( temp_fasta_path, pymol_selection )
-        with open(temp_fasta_path,'r') as fastafile:
-            fastafile = fastafile.readlines()
-            aaseq = ''.join( fastafile[1:] ) # all lines except title line
-        os.remove(temp_fasta_path)
-
+    def codon_optimization(self, aaseq):
         ## super crude codon optimization :)
         dnaseq = []
         for letter in aaseq:
@@ -241,12 +234,28 @@ Created by Rutgers iGEM team 2013, Rutgers University, NJ.
             if letter not in '\n':
                 dnaseq.append(letter)
         dnaseq = ''.join(dnaseq)
+        return dnaseq
+
+    def derive_sequence_from_selection(self, pymol_selection, plasmid):
+        _handle, temp_fasta_path = tempfile.mkstemp(suffix=".fasta")
+        cmd.save( temp_fasta_path, pymol_selection )
+        with open(temp_fasta_path,'r') as fastafile:
+            fastafile = fastafile.readlines()
+            aaseq = ''.join( fastafile[1:] ) # all lines except title line
+        os.remove(temp_fasta_path)
+
+        dnaseq = self.codon_optimization(aaseq)
         ## TODO: important! last "A" base is outside reading frame O_o
-        dnaseq = "GTTTCTTCGAATTCGCGGCCGCTTCTAGAG"+dnaseq+"GTTTCTTCCTGCAGCGGCCGCTACTAGTATTATTA"
+        print "with plasmid!"
         print dnaseq
+        if not plasmid:
+            print "without plasmid! (includes insert prefix and suffix)"
+            dnaseq = "GTTTCTTCGAATTCGCGGCCGCTTCTAGAG"+dnaseq+"GTTTCTTCCTGCAGCGGCCGCTACTAGTATTATTA"
+            print dnaseq
         return dnaseq
 
     def show_how_NOPLASMID(self, local_dna_fastafile):
+        ## TODO: change URL to GeneArt
         gene_insert_howto = """
 1) Copy the DNA sequence from:
 
@@ -322,24 +331,23 @@ https://www.genscript.com/ssl-bin/quote_gene_synthesis
         if not new_codon: # nothing even close :P
             new_codon = [ potential_codons[ newaa ][0] ]
         # return oligo, which extends 15 bases in each direction (terminal mutations are extremely rare... unless... His-tag?)
+        
         oligo_to_order = dnaseq[ clip_before-15 : clip_before ] + new_codon[0] + dnaseq[ clip_after : clip_after+15 ]
         print oligo_to_order
         return oligo_to_order
 
-    def show_how_MUTATION(self, mut_oligo):
+    def show_how_MUTATION(self, local_dna_fastafile):
         mut_oligo_howto = """
 1) Copy the DNA sequence from:
 
 """ + os.path.abspath( local_dna_fastafile ) + """
 
 2) Please visit:
-https://www.genscript.com/ssl-bin/quote_gene_synthesis
+http://www.idtdna.com/order/OrderEntry.aspx?type=dna&qs=1
 
-3) Prepare the custom biobrick-compatible pSB1C3 plasmid as per instructions
-
-4) Paste the DNA sequence into the textbox and order your plasmid!
+3) Paste the DNA sequence into the textbox and order your plasmid!
 """
-        tkMessageBox.showinfo(title='Gene with Plasmid - Instructions', message=gene_plasmid_howto)
+        tkMessageBox.showinfo(title='Mutational Oligo - Instructions', message=mut_oligo_howto)
 
     def execute(self, command):
         """ Run the command represented by the botton clicked by user.
@@ -383,7 +391,8 @@ https://www.genscript.com/ssl-bin/quote_gene_synthesis
                 # just differentiate file by time made...
                 local_dna_fastafile = time.strftime("%H_%M_%S", time.gmtime())+".iGEMplugin.DNA.mutation.fasta"
                 with open(local_dna_fastafile,'w') as dnafastafile:
-                    dnafastafile.write( ">"+protein_sel+"\n"+gene_insert_string )
+                    dnafastafile.write( ">mutation\n"+oligoseq )
+                self.show_how_MUTATION(local_dna_fastafile)
 
         elif command == 'Display Vertices':
             if len(self.msp.vert_coords) == 0:
